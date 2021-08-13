@@ -9,8 +9,7 @@
 
 # Approximate execution time for this code: 12 mins
 
-library(R2WinBUGS)
-bugs.dir <- "C:/WinBUGS14" # location of "WinBUGS14.exe" application
+library(jagsUI)
 
 # 10.4 A slightly more complex site-occupancy model with covariates
 # =================================================================
@@ -29,10 +28,12 @@ vegHt <- sort(runif(M, -1, 1)) # sort for graphical convenience
 beta0 <- 0                    # Logit-scale intercept
 beta1 <- 3                    # Logit-scale slope for vegHt
 psi <- plogis(beta0 + beta1 * vegHt) # Occupancy probability
-# plot(vegHt, psi, ylim = c(0,1), type = "l", lwd = 3) # Plot psi relationship
+psi
+plot(vegHt, psi, ylim = c(0,1), type = "l", lwd = 3) # Plot psi relationship
 
 # Now visit each site and observe presence/absence perfectly
 z <- rbinom(M, 1, psi)        # True presence/absence
+z
 
 # Look at data so far
 table(z)
@@ -44,19 +45,24 @@ plot(vegHt, z, xlab="Vegetation height", ylab="True presence/absence (z)",
 plot(function(x) plogis(beta0 + beta1*x), -1, 1, add=TRUE, lwd=3, col = "red")
 
 # Create a covariate called wind
+set.seed(12)
 wind <- array(runif(M * J, -1, 1), dim = c(M, J))
+head(wind)
 
 # Choose parameter values for measurement error model and compute detectability
 alpha0 <- -2                        # Logit-scale intercept
 alpha1 <- -3                        # Logit-scale slope for wind
 p <- plogis(alpha0 + alpha1 * wind) # Detection probability
-# plot(p ~ wind, ylim = c(0,1))     # Look at relationship
+head(p)
+plot(p ~ wind, ylim = c(0,1))     # Look at relationship
 
 # Take J = 3 presence/absence measurements at each site
+set.seed(12)
 for(j in 1:J) {
     y[,j] <- rbinom(M, z, p[,j])
 }
 sum(apply(y, 1, max))               # Number of sites with observed presences
+head(y); tail(y)
 
 # Plot observed data and true effect of wind on detection probability
 plot(wind, y, xlab="Wind", ylab="Observed det./nondetection data (y)",
@@ -69,8 +75,9 @@ cbind(psi=round(psi,2), z=z, y1=y[,1], y2=y[,2], y3=y[,3])
 
 # Create factors
 time <- matrix(rep(as.character(1:J), M), ncol = J, byrow = TRUE)
+time
 hab <- c(rep("A", 33), rep("B", 33), rep("C", 34))  # Must have M = 100
-
+hab
 
 # Load unmarked, format data and summarize
 library(unmarked)
@@ -111,7 +118,6 @@ lines(vegHt, predict(fm.occ1, type="state")[,1], col = "blue", lwd = 3)
 legend(-1, 0.9, c("Truth", "'LR' with p", "LR without p"),
     col=c("red", "blue", "black"), lty = 1, lwd=3, cex = 1.2)
 
-
 ranef(fm.occ1)
 
 
@@ -121,6 +127,17 @@ ranef(fm.occ1)
 (z1 <- (psi1 * prod(1-p1)) / ((1 - psi1) + psi1 * prod(1-p1)))
 
 # Define function for finite-sample number and proportion of occupied sites
+ranef(fm.occ1) # random effect predictions (conditional occupancy probability)
+ranef(fm.occ1)@post # Pr(0) or Pr(1) conditional on the data
+ranef(fm.occ1)@post[,2,] # Pr(1) conditional on the data (ie conditional occupancy probability)
+sum(ranef(fm.occ1)@post[,2,]) # Sum across the predicted occupancy probability
+sum(z) # True occupancy
+sum(apply(y, 1, max)) # Observed occupancy
+ 
+Nocc <- sum(ranef(fm.occ1)@post[,2,])
+psi.fs <- Nocc / nrow(fm.occ1@data@y)
+out <- c(Nocc = Nocc, psi.fs = psi.fs)
+   
 fs.fn <- function(fm){
    Nocc <- sum(ranef(fm)@post[,2,])
    psi.fs <- Nocc / nrow(fm@data@y)
@@ -130,8 +147,8 @@ fs.fn <- function(fm){
 
 # Bootstrap the function
 fs.hat <- fs.fn(fm.occ1)           # Point estimate
-pb.fs <- parboot(fm.occ1, fs.fn, nsim=10000, report=2) # Takes a while (33 min)
-# system.time(pb.fs <- parboot(fm.occ1, fs.fn, nsim=100, report=10)) # quicker
+# pb.fs <- parboot(fm.occ1, fs.fn, nsim=10000, report=2) # Takes a while (33 min)
+system.time(pb.fs <- parboot(fm.occ1, fs.fn, nsim=100, report=10)) # quicker
 
 # Summarize bootstrap distributions
 summary(pb.fs@t.star)
@@ -174,8 +191,7 @@ str( win.data <- list(y = y, vegHt = vegHt, wind = wind, M = nrow(y),
     J = ncol(y), XvegHt = seq(-1, 1, length.out=100),
     Xwind = seq(-1, 1, length.out=100)) )
 
-
-# Specify model in BUGS language
+# Specify model in JAGS language
 sink("model.txt")
 cat("
 model {
@@ -196,7 +212,7 @@ model {
     for (j in 1:J) {
       # Observation model for the actual observations
       y[i,j] ~ dbern(p.eff[i,j])    # Detection-nondetection at i and j
-      p.eff[i,j] <- z[i] * p[i,j]   # 'straw man' for WinBUGS
+      # p.eff[i,j] <- z[i] * p[i,j]   # 'straw man' for WinBUGS
       logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
     }
   }
@@ -225,10 +241,8 @@ params <- c("alpha0", "alpha1", "beta0", "beta1", "N.occ", "psi.fs",
 ni <- 25000   ;   nt <- 10   ;   nb <- 2000   ;   nc <- 3
 
 # Call WinBUGS from R (ART 2 min) and summarize posteriors
-out1B <- bugs(win.data, inits, params, "model.txt",
-  n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb,
-  # debug = TRUE, bugs.directory = bugs.dir, working.directory = getwd())
-  debug = FALSE, bugs.directory = bugs.dir)  # ~~~~~ for autotesting
+out1B <- jags(win.data, inits, params, "model.txt",
+  n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb)  
 print(out1B, dig = 3)
 
 
