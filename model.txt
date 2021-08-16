@@ -16,8 +16,7 @@ model {
     logit(psi[i]) <- beta0 + beta1 * vegHt[i]
     for (j in 1:J) {
       # Observation model for the actual observations
-      y[i,j] ~ dbern(p.eff[i,j])    # Detection-nondetection at i and j
-      p.eff[i,j] <- z[i] * p[i,j]   # 'straw man' for WinBUGS
+      y[i,j] ~ dbern(z[i] * p[i,j])    # Detection-nondetection at i and j
       logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
     }
   }
@@ -25,9 +24,5 @@ model {
   # Derived quantities
   N.occ <- sum(z[])       # Number of occupied sites among sample of M
   psi.fs <- N.occ/M       # Proportion of occupied sites among sample of M
-  for(k in 1:100){
-    logit(psi.pred[k]) <- beta0 + beta1 * XvegHt[k] # psi predictions
-    logit(p.pred[k]) <- alpha0 + alpha1 * Xwind[k]  # p predictions
-  }
 }
 
