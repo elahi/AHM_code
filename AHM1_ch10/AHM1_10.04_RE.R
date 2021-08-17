@@ -334,8 +334,8 @@ wind <- array(runif(M * J, -1, 1), dim = c(M, J))
 head(wind)
 
 # Choose parameter values for measurement error model and compute detectability
-alpha0 <- 2                       # Logit-scale intercept
-alpha1 <- -1                        # Logit-scale slope for wind
+alpha0 <- -1                       # Logit-scale intercept
+alpha1 <- -2                        # Logit-scale slope for wind
 p <- plogis(alpha0 + alpha1 * wind) # Detection probability
 head(p)
 plot(p ~ wind, ylim = c(0,1))     # Look at relationship
@@ -428,21 +428,16 @@ ni <- 2500   ;   nt <- 10   ;   nb <- 2000   ;   nc <- 3
 # Call JAGS from R (ART 2 min) and summarize posteriors
 m1_jags <- jags(win.data, inits, params, "model.txt",
               n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb)  
+
+alpha0; alpha1; beta0; beta1
 print(m1_jags, dig = 3)
 
 m1_unmarked
 
-alpha0; alpha1; beta0; beta1
 
 ##### JAGS, MODEL 1 - BINOMIAL #####
 
-# Bundle and summarize data set
-str( win.data <- list(y = y, vegHt = vegHt, wind = wind, M = nrow(y),
-                      J = ncol(y), XvegHt = seq(-1, 1, length.out=100),
-                      Xwind = seq(-1, 1, length.out=100)) )
-
-win.data
-
+# Create aggregated dataset
 d <- tibble(y = apply(y, 1, sum), 
             n = 3, 
             vegHt = vegHt)
@@ -523,7 +518,190 @@ m1_jags_binomial <- jags(dat_list, inits, params, "model.txt",
                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb)  
 print(m1_jags_binomial, dig = 3)
 
+# Compare with other models and truth
+print(m1_jags, dig = 3)
 m1_unmarked
+alpha0; alpha1; beta0; beta1
 
+##### JAGS, MODEL 2 - BINOMIAL #####
+
+# Trying to break the model
+
+# Create aggregated dataset
+d <- tibble(y = apply(y, 1, sum), 
+            n = 3, 
+            vegHt = vegHt)
+
+# Add random integer to n, add 3 sets of y
+rand_n <- floor(runif(100, min = 10, 20))
+add_y <- c(rep(0, 34), rep(5, 33), rep(10, 33))
+d <- d %>% mutate(n = n + 10, 
+                  y = y + add_y)
+d
+
+dat_list <- list(
+  M = nrow(d), 
+  y = as.double(d$y), 
+  n = as.double(d$n), 
+  e = 0.0001
+)
+
+# Specify model in JAGS language
+sink("model.txt")
+cat("
+model {
+
+  # Priors
+  p ~ dunif(0, 1)              # Detection probability on prob. scale
+  psi ~ dunif(0, 1)            # Occupancy intercept on prob. scale
+
+  # Likelihood
+  for (i in 1:M) {
+    # True state model for the partially observed true state
+    z[i] ~ dbern(psi)                                             # Occupancy model
+    mu.p[i] <- z[i] * p                                           # Detection probability
+    y[i] ~ dbin(mu.p[i], n[i])                                    # Detection model
+    y.new[i] ~ dbin(z[i] * p, n[i])                               # Simulate new data
+    
+    # Chi-square discrepancy for a poisson; e is small value to avoid division by zero
+    chi2p.data[i] <- pow((y[i] - mu.p[i] * n[i]), 2) / (sqrt(mu.p[i] * n[i]) + e) 
+    chi2p.sim[i] <- pow((y.new[i] - mu.p[i] * n[i]), 2) / (sqrt(mu.p[i] * n[i]) + e) 
+    
+    # Chi-square discrepancy for a binomial; e is small value to avoid division by zero
+    chi2b.data[i] <-  pow((y[i] - mu.p[i] * n[i]) / sqrt((mu.p[i] + e) * n[i] * (1 - mu.p[i] - e)), 2)
+    chi2b.sim[i] <-  pow((y.new[i] - mu.p[i] * n[i]) / sqrt((mu.p[i] + e) * n[i] * (1 - mu.p[i] - e)), 2)
+
+  }
+  
+  # Chi-square, poisson [Mackenzie and Bailey, 2004]
+  d.chi2p.data <- sum(chi2p.data)
+  d.chi2p.sim <- sum(chi2p.sim)
+  p.chi2p <- step(d.chi2p.sim - d.chi2p.data)
+  
+  # Chi-square, binomial [Tobler et al. 2015]
+  d.chi2b.data <- sum(chi2b.data)
+  d.chi2b.sim <- sum(chi2b.sim)
+  p.chi2b <- step(d.chi2b.sim - d.chi2b.data)
+  
+  mean.data <- mean(y)
+  mean.new  <- mean(y.new)
+  p.mean <- step(mean.new - mean.data)
+
+}
+",fill = TRUE)
+sink()
+
+# Initial values: must give for same quantities as priors given !
+#zst <- apply(y, 1, max)        # Avoid data/model/inits conflict
+zst <- ifelse(d$y > 0, 1, 0)
+inits <- function(){list(z = zst, psi = runif(1))}
+
+# Parameters monitored
+params <- c("p.chi2p", "p.chi2b", "p.mean") 
+
+# MCMC settings
+ni <- 2500   ;   nt <- 10   ;   nb <- 2000   ;   nc <- 3
+
+# Call JAGS from R (ART 2 min) and summarize posteriors
+m2_jags_binomial <- jags(dat_list, inits, params, "model.txt",
+                         n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb)  
+print(m2_jags_binomial, dig = 3) 
+
+# Compare with other models and truth
+print(m2_jags_binomial, dig = 3)
+
+
+##### JAGS, MODEL 3 - BINOMIAL #####
+
+# Create aggregated dataset
+d <- tibble(y = apply(y, 1, sum), 
+            n = 3, 
+            vegHt = vegHt, 
+            wind = apply(wind, 1, mean))
+
+# Add random integer to n
+rand_n <- runif(100, min = 0, 20)
+d <- d %>% mutate(n + rand_n)
+
+dat_list <- list(
+  M = nrow(d), 
+  y = as.double(d$y), 
+  n = as.double(d$n), 
+  wind = as.double(d$wind), 
+  vegHt = as.double(d$vegHt), 
+  e = 0.0001
+)
+
+# Specify model in JAGS language
+sink("model.txt")
+cat("
+model {
+
+  # Priors
+  p ~ dunif(0, 1)              # Detection probability on prob. scale
+  mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
+  beta0 <- logit(mean.psi)     # Occupancy intercept
+  beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
+
+  # Likelihood
+  for (i in 1:M) {
+    # True state model for the partially observed true state
+    logit(psi[i]) <- beta0 + beta1 * wind[i]
+    z[i] ~ dbern(psi[i])                                          # Occupancy model
+    mu.p[i] <- z[i] * p                                           # Detection probability
+    y[i] ~ dbin(mu.p[i], n[i])                                    # Detection model
+    y.new[i] ~ dbin(z[i] * p, n[i])                               # Simulate new data
+    
+    # Chi-square discrepancy for a poisson; e is small value to avoid division by zero
+    chi2p.data[i] <- pow((y[i] - mu.p[i] * n[i]), 2) / (sqrt(mu.p[i] * n[i]) + e) 
+    chi2p.sim[i] <- pow((y.new[i] - mu.p[i] * n[i]), 2) / (sqrt(mu.p[i] * n[i]) + e) 
+    
+    # Chi-square discrepancy for a binomial; e is small value to avoid division by zero
+    chi2b.data[i] <-  pow((y[i] - mu.p[i] * n[i]) / sqrt((mu.p[i] + e) * n[i] * (1 - mu.p[i] - e)), 2)
+    chi2b.sim[i] <-  pow((y.new[i] - mu.p[i] * n[i]) / sqrt((mu.p[i] + e) * n[i] * (1 - mu.p[i] - e)), 2)
+
+  }
+  
+  # Derived quantities
+  N.occ <- sum(z[])       # Number of occupied sites among sample of M
+  psi.fs <- N.occ/M       # Proportion of occupied sites among sample of M
+  
+  # Chi-square, poisson [Mackenzie and Bailey, 2004]
+  d.chi2p.data <- sum(chi2p.data)
+  d.chi2p.sim <- sum(chi2p.sim)
+  p.chi2p <- step(d.chi2p.sim - d.chi2p.data)
+  
+  # Chi-square, binomial [Tobler et al. 2015]
+  d.chi2b.data <- sum(chi2b.data)
+  d.chi2b.sim <- sum(chi2b.sim)
+  p.chi2b <- step(d.chi2b.sim - d.chi2b.data)
+  
+  mean.data <- mean(y)
+  mean.new  <- mean(y.new)
+  p.mean <- step(mean.new - mean.data)
+
+}
+",fill = TRUE)
+sink()
+
+# Initial values: must give for same quantities as priors given !
+zst <- apply(y, 1, max)        # Avoid data/model/inits conflict
+inits <- function(){list(z = zst, #mean.p = runif(1), alpha1 = runif(1),
+                         mean.psi = runif(1), beta1 = runif(1))}
+
+# Parameters monitored
+params <- c("beta0", "beta1", "psi.fs", "p.chi2p", "p.chi2b", "p.mean") 
+
+# MCMC settings
+ni <- 2500   ;   nt <- 10   ;   nb <- 2000   ;   nc <- 3
+
+# Call JAGS from R (ART 2 min) and summarize posteriors
+m3_jags_binomial <- jags(dat_list, inits, params, "model.txt",
+                         n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb)  
+print(m3_jags_binomial, dig = 3)
+
+# Compare with other models and truth
+print(m1_jags, dig = 3)
+m1_unmarked
 alpha0; alpha1; beta0; beta1
 

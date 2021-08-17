@@ -2,9 +2,7 @@
 model {
 
   # Priors
-  mean.p ~ dunif(0, 1)         # Detection intercept on prob. scale
-  alpha0 <- logit(mean.p)      # Detection intercept
-  alpha1 ~ dunif(-20, 20)      # Detection slope on wind
+  p ~ dunif(0, 1)              # Detection probability on prob. scale
   mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
   beta0 <- logit(mean.psi)     # Occupancy intercept
   beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
@@ -12,17 +10,39 @@ model {
   # Likelihood
   for (i in 1:M) {
     # True state model for the partially observed true state
-    z[i] ~ dbern(psi[i])      # True occupancy z at site i
-    logit(psi[i]) <- beta0 + beta1 * vegHt[i]
-    for (j in 1:J) {
-      # Observation model for the actual observations
-      y[i,j] ~ dbern(z[i] * p[i,j])    # Detection-nondetection at i and j
-      logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
-    }
-  }
+    logit(psi[i]) <- beta0 + beta1 * wind[i]
+    z[i] ~ dbern(psi[i])                                          # Occupancy model
+    mu.p[i] <- z[i] * p                                           # Detection probability
+    y[i] ~ dbin(mu.p[i], n[i])                                    # Detection model
+    y.new[i] ~ dbin(z[i] * p, n[i])                               # Simulate new data
+    
+    # Chi-square discrepancy for a poisson; e is small value to avoid division by zero
+    chi2p.data[i] <- pow((y[i] - mu.p[i] * n[i]), 2) / (sqrt(mu.p[i] * n[i]) + e) 
+    chi2p.sim[i] <- pow((y.new[i] - mu.p[i] * n[i]), 2) / (sqrt(mu.p[i] * n[i]) + e) 
+    
+    # Chi-square discrepancy for a binomial; e is small value to avoid division by zero
+    chi2b.data[i] <-  pow((y[i] - mu.p[i] * n[i]) / sqrt((mu.p[i] + e) * n[i] * (1 - mu.p[i] - e)), 2)
+    chi2b.sim[i] <-  pow((y.new[i] - mu.p[i] * n[i]) / sqrt((mu.p[i] + e) * n[i] * (1 - mu.p[i] - e)), 2)
 
+  }
+  
   # Derived quantities
   N.occ <- sum(z[])       # Number of occupied sites among sample of M
   psi.fs <- N.occ/M       # Proportion of occupied sites among sample of M
+  
+  # Chi-square, poisson [Mackenzie and Bailey, 2004]
+  d.chi2p.data <- sum(chi2p.data)
+  d.chi2p.sim <- sum(chi2p.sim)
+  p.chi2p <- step(d.chi2p.sim - d.chi2p.data)
+  
+  # Chi-square, binomial [Tobler et al. 2015]
+  d.chi2b.data <- sum(chi2b.data)
+  d.chi2b.sim <- sum(chi2b.sim)
+  p.chi2b <- step(d.chi2b.sim - d.chi2b.data)
+  
+  mean.data <- mean(y)
+  mean.new  <- mean(y.new)
+  p.mean <- step(mean.new - mean.data)
+
 }
 
