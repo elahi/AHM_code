@@ -1,7 +1,7 @@
 #   Applied hierarchical modeling in ecology
 #   Modeling distribution, abundance and species richness using R and BUGS
 #   Volume 1: Prelude and Static models
-#   Marc Kéry & J. Andy Royle
+#   Marc K?ry & J. Andy Royle
 #
 # Chapter 10. Modeling static occurrence and species distributions using
 #             site-occupancy models
@@ -87,7 +87,7 @@ inits <- function(){list(z = apply(data$y, 1, max), mean.psi = runif(1),
 params <- c("alpha0", "alpha", "beta0", "beta")
 
 # MCMC settings
-ni <- 50000   ;   nt <- 10   ;   nb <- 10000   ;   nc <- 3
+ni <- 5000   ;   nt <- 10   ;   nb <- 1000   ;   nc <- 3
 
 # Run JAGS (ART 4 min), look at convergence and summarize posteriors
 outA <- jags(win.data, inits, params, "modelA.txt", n.chains = nc,

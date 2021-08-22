@@ -1,0 +1,39 @@
+
+model {
+
+# Priors
+  mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+  alpha0 <- logit(mean.p)       #   same on logit scale
+  mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+  beta0 <- logit(mean.psi)      #   same on logit scale
+  for(k in 1:2){                # 2 terms in detection model
+    alpha[k] ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+  }
+  for(k in 1:11){               # 11 terms in occupancy model
+    beta[k] ~ dnorm(0, 0.1)    # Covariates on logit(occupancy)
+  }
+
+  # Likelihood
+  for (i in 1:M) {              # Loop over sites
+    z[i] ~ dbern(psi[i])
+    logit(psi[i]) <- beta0 +                 # occupancy (psi) intercept
+      beta[1] * elev[i] +                    # effect of elev
+      beta[2] * forest[i] +                  # effect of forest
+      beta[3] * equals(HAB[i],2) +           # effect of habitat 2 (= B)
+      beta[4] * equals(HAB[i],3) +           # effect of habitat 3 (= C)
+      beta[5] * elev[i] * forest[i] +                     # elev:forest
+      beta[6] * elev[i] * equals(HAB[i],2) +              # elev:habB
+      beta[7] * elev[i] * equals(HAB[i],3) +              # elev:habC
+      beta[8] * forest[i] * equals(HAB[i],2) +            # forest:habB
+      beta[9] * forest[i] * equals(HAB[i],3) +            # forest:habC
+      beta[10] * elev[i] * forest[i] * equals(HAB[i],2) + # elev:forest:habB
+      beta[11] * elev[i] * forest[i] * equals(HAB[i],3)   # elev:forest:habC
+    for (j in 1:J) {           # Loop over replicates
+      y[i,j] ~ dbern(z[i] * p[i,j])        # WinBUGS would need 'straw man' !
+      logit(p[i,j]) <- alpha0 +            # detection (p) intercept
+           alpha[1] * elev[i] +              # effect of elevation on p
+           alpha[2] * wind[i,j]              # effect of wind on p
+    }
+  }
+}
+
